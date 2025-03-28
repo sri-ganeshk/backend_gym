@@ -46,6 +46,7 @@ app.get('/get_profile', async (req, res) => {
  * 
  * Creates a membership transaction for the customer.
  * If the customer does not exist, creates a new customer record with active status.
+ * If the customer exists and the new start_date is before the current end_date, a warning is issued.
  */
 app.post('/membership', async (req, res) => {
   const {
@@ -85,13 +86,20 @@ app.post('/membership', async (req, res) => {
       },
     });
 
+    // Calculate the end_date based on the provided start_date and duration (in months)
+    const newStartDate = new Date(start_date);
+    const newEndDate = new Date(new Date(start_date).setMonth(new Date(start_date).getMonth() + Number(duration)));
+
+    // If the customer exists, check if the new start date is before the current end_date
+    if (customer && customer.end_date && newStartDate < new Date(customer.end_date)) {
+      return res.status(400).json({ warning: 'New membership start date is before the current membership end date.' });
+    }
+
     // Get bill_date in Asia/Kolkata timezone
     const bill_date = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-    // Calculate the end_date based on the start_date and duration (in months)
-    const end_date = new Date(new Date(start_date).setMonth(new Date(start_date).getMonth() + Number(duration)));
 
     if (!customer) {
-      // Create a new customer with active membership status and provided end_date
+      // Create a new customer with active membership status and the calculated end_date
       customer = await prisma.customer.create({
         data: {
           gym_owner_id: Number(gym_owner_id),
@@ -99,16 +107,16 @@ app.post('/membership', async (req, res) => {
           phone_number,
           status: true, // Active status
           gym_id: gym_id.toString(),
-          end_date: end_date,
+          end_date: newEndDate,
         },
       });
     } else {
-      // Update customer status and end_date when a new membership is added
+      // Update customer's status and end_date when a new membership is added
       customer = await prisma.customer.update({
         where: { id: customer.id },
         data: {
           status: true,
-          end_date: end_date,
+          end_date: newEndDate,
         },
       });
     }
@@ -118,7 +126,7 @@ app.post('/membership', async (req, res) => {
       data: {
         customer_id: customer.id,
         duration: Number(duration),
-        start_date: new Date(start_date),
+        start_date: newStartDate,
         bill_date: bill_date,
         payment_mode,
         amount: parseFloat(amount),
@@ -132,6 +140,7 @@ app.post('/membership', async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 });
+
 
 /**
  * GET /profile
