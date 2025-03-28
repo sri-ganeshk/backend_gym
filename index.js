@@ -1,11 +1,20 @@
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
+import { initializeWhatsAppClient, getWhatsAppClient } from './whatsappClient.js';
 
 const app = express();
 const prisma = new PrismaClient();
 
 app.use(express.json());
+
+initializeWhatsAppClient()
+  .then(() => {
+    console.log("WhatsApp client is ready.");
+  })
+  .catch((error) => {
+    console.error("Failed to initialize WhatsApp client:", error);
+  });
 
 
 /**
@@ -131,6 +140,64 @@ app.post('/membership', async (req, res) => {
       },
     });
 
+    const gymOwner = await prisma.gym_owner.findUnique({
+      where: { id: Number(gym_owner_id) },
+      select: { gym_name: true , phone_number: true,name: true },
+    });
+
+    try {
+      // Get the WhatsApp client. Ensure it has been initialized before this route is hit.
+      const waClient = getWhatsAppClient();
+      // Format the customer's phone number to include the WhatsApp suffix. Ensure the phone is in international format.
+      const waNumber = phone_number.includes('@s.whatsapp.net') 
+        ? phone_number 
+        : `91${phone_number}@s.whatsapp.net`;
+        const customer_message = `${gymOwner.gym_name.toUpperCase()}
+
+DEAR : Madam / Sir
+
+UR ADMIS NO : ${customer.gym_id}
+
+LAST PAID DATE : ${bill_date.toLocaleDateString('en-GB')}
+LAST PAID AMOUNT : ${amount} INR
+
+
+THIS IS TO REMIND YOU
+ABOUT THE COMPLETION OF UR "GYM FEE SUBSCRIPTION" HAS BEEN ENDED. 
+HENCE, WE REMIND U TO RENEW YOUR "FEE SUBSCRIPTION" 
+BE FIT FOR A GOOD HEALTHY TOMORROW.
+
+THANK YOU  
+
+${gymOwner.gym_name.toUpperCase()}
+${gymOwner.phone_number}
+${gymOwner.name}`;
+
+
+        
+      // Send the message using the WhatsApp client
+      await waClient.sendMessage(waNumber, { text: customer_message });
+      console.log(`Message sent to ${phone_number}`);
+const owner_message = `Hi ${gymOwner.name},
+A new membership has been created for ${customer.name} (${phone_number}).
+Membership Details:
+- Duration: ${duration} months
+- Start Date: ${start_date}
+- Payment Mode: ${payment_mode}
+- Amount: ${amount} INR
+- Personal Training: ${personal_training ? 'Yes' : 'No'}
+- Bill Date: ${bill_date.toLocaleDateString('en-GB')}
+- Customer End Date: ${customer.end_date.toLocaleDateString('en-GB')}
+`;
+
+      // Send the message to the gym owner
+      await waClient.sendMessage(`91${gymOwner.phone_number}@s.whatsapp.net`, { text: owner_message });
+      console.log(`Message sent to gym owner ${gymOwner.phone_number}`);
+    } catch (whatsappError) {
+      console.error('Error sending WhatsApp message:', whatsappError);
+      // Optionally, you can handle message sending errors differently
+    }
+
     res.json({ success: true, membership });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -226,6 +293,43 @@ app.post('/login', async (req, res) => {
   );
 
   return res.json({ success: true, token });
+});
+
+
+app.get('/expiring_memberships', async (req, res) => {
+  try {
+    const { gym_owner_id } = req.query;
+    if (!gym_owner_id) {
+      return res.status(400).json({ error: 'gym_owner_id required' });
+    }
+    // Get the current date and the date 7 days from now
+    const now = new Date();
+    const sevenDaysLater = new Date();
+    sevenDaysLater.setDate(now.getDate() + 7);
+
+    // Find customers with active memberships expiring within the next 7 days
+    const expiringCustomers = await prisma.customer.findMany({
+      where: {
+        gym_owner_id: Number(gym_owner_id),
+        status: true, // Only consider active memberships
+        end_date: {
+          gte: now,
+          lte: sevenDaysLater,
+        },
+      },
+      // Optionally, select specific fields or include related memberships if needed
+      select: {
+        id: true,
+        name: true,
+        phone_number: true,
+        end_date: true,
+      },
+    });
+
+    res.json(expiringCustomers);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 
