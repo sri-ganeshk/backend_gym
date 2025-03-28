@@ -90,10 +90,6 @@ app.post('/membership', async (req, res) => {
     const newStartDate = new Date(start_date);
     const newEndDate = new Date(new Date(start_date).setMonth(new Date(start_date).getMonth() + Number(duration)));
 
-    // If the customer exists, check if the new start date is before the current end_date
-    if (customer && customer.end_date && newStartDate < new Date(customer.end_date)) {
-      return res.status(400).json({ warning: 'New membership start date is before the current membership end date.' });
-    }
 
     // Get bill_date in Asia/Kolkata timezone
     const bill_date = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
@@ -232,11 +228,9 @@ app.post('/login', async (req, res) => {
   return res.json({ success: true, token });
 });
 
-export default app;
 
-// if (require.main === module) {
-//     const PORT = process.env.PORT || 3000;
-//     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-// }
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
 
