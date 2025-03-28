@@ -1,0 +1,46 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model gym_owner {
+  id           Int        @id @default(autoincrement())
+  name         String
+  phone_number String     @unique
+  email        String     @unique
+  password     String
+  gym_name     String
+  customers    customer[]
+}
+
+model customer {
+  id            Int          @id @default(autoincrement())
+  gym_id        String       // Unique identifier for the customer in the gym system
+  gym_owner_id  Int
+  gym_owner     gym_owner    @relation(fields: [gym_owner_id], references: [id])
+  name          String
+  phone_number  String
+  status        Boolean      @default(false)
+  end_date      DateTime?
+  memberships   membership[]
+
+  @@unique([gym_id, gym_owner_id])
+}
+
+model membership {
+  id                Int       @id @default(autoincrement())
+  customer_id       Int
+  customer          customer  @relation(fields: [customer_id], references: [id])
+  transaction_date  DateTime  @default(now())
+  duration          Int       // e.g., number of months
+  start_date        DateTime  // When the membership starts
+  bill_date         DateTime  // When billing occurred
+  payment_mode      String    // "cash" or "utr_number", etc.
+  amount            Float
+  workout_type      String    // "cardio", "strength", or "both"
+  personal_training Boolean   // true if personal training is included
+}
