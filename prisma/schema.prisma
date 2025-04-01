@@ -39,7 +39,8 @@ model membership {
   duration          Int       // e.g., number of months
   start_date        DateTime  // When the membership starts
   bill_date         DateTime  // When billing occurred
-  payment_mode      String    // "cash" or "utr_number", etc.
+  payment_mode      String    // "cash", "upi", "card", etc.
+  payment_details   String?   // UPI ID or card details (optional)
   amount            Float
   workout_type      String    // "cardio", "strength", or "both"
   personal_training Boolean   // true if personal training is included
