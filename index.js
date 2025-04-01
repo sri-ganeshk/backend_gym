@@ -405,12 +405,7 @@ app.put('/change_password', async (req, res) => {
 
 app.get('/revenue', async (req, res) => {
   const gym_owner_id = req.user.id;
-  const { gym_id } = req.query;
-
-  if (!gym_id) {
-    return res.status(400).json({ error: 'gym_id is required' });
-  }
-
+ 
   try {
     // Get start and end of the current month
     const startOfMonth = new Date();
@@ -426,7 +421,7 @@ app.get('/revenue', async (req, res) => {
       where: {
         customer: {
           gym_owner_id: Number(gym_owner_id),
-          gym_id: gym_id.toString(),
+          
         },
         start_date: { gte: startOfMonth, lte: endOfMonth },
       },
@@ -441,7 +436,7 @@ app.get('/revenue', async (req, res) => {
   }
 });
 
-app.get('total_active_count', async (req, res) => {
+app.get('/total_active_count', async (req, res) => {
   const gym_owner_id = req.user.id;
 
 
@@ -449,7 +444,6 @@ app.get('total_active_count', async (req, res) => {
     const activeCount = await prisma.customer.count({
       where: {
         gym_owner_id: Number(gym_owner_id),
-        gym_id: gym_id.toString(),
         status: true,
       },
     });
