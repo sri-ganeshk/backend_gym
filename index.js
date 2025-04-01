@@ -332,7 +332,7 @@ app.get('/expiring_memberships/:days', async (req, res) => {
         status: true,
         end_date: { gte: now, lte: futureDate },
       },
-      select: { id: true, name: true, phone_number: true, end_date: true },
+      select: { id: true, name: true, phone_number: true, end_date: true,gym_id: true },
     });
 
     res.json({
@@ -362,7 +362,7 @@ app.get('/account', async (req, res) => {
   }
 });
 
-app.update('/account', async (req, res) => {
+app.put('/account', async (req, res) => {
   const gym_owner_id = req.user.id;
   const { name, phone_number, gym_name } = req.body;
 
@@ -378,7 +378,7 @@ app.update('/account', async (req, res) => {
   }
 });
 
-app.update('/change_password', async (req, res) => {
+app.put('/change_password', async (req, res) => {
   const gym_owner_id = req.user.id;
   const { old_password, new_password } = req.body;
 
