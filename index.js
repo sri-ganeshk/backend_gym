@@ -460,6 +460,31 @@ app.get('total_active_count', async (req, res) => {
   }
 });
 
+app.get('/expiring_memberships_count/', async (req, res) => {
+  const gym_owner_id = req.user.id;
+  const days =  7;
+
+  try {
+    const now = new Date();
+    const futureDate = new Date();
+    futureDate.setDate(now.getDate() + days);
+
+    const count = await prisma.customer.count({
+      where: {
+        gym_owner_id: Number(gym_owner_id),
+        status: true,
+        end_date: { gte: now, lte: futureDate },
+      },
+    });
+
+    res.json({ count: count });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
