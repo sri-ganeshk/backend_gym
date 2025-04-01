@@ -350,7 +350,7 @@ app.get('/account', async (req, res) => {
   try {
     const gymOwner = await prisma.gym_owner.findUnique({
       where: { id: Number(gym_owner_id) },
-      select: { name: true, phone_number: true, gym_name: true, gym_id: true },
+      select: { name: true, phone_number: true, gym_name: true},
     });
 
     if (!gymOwner) {
