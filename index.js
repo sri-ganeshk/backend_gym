@@ -344,5 +344,64 @@ app.get('/expiring_memberships/:days', async (req, res) => {
   }
 });
 
+app.get('/account', async (req, res) => {
+  const gym_owner_id = req.user.id;
+
+  try {
+    const gymOwner = await prisma.gym_owner.findUnique({
+      where: { id: Number(gym_owner_id) },
+      select: { name: true, phone_number: true, gym_name: true, gym_id: true },
+    });
+
+    if (!gymOwner) {
+      return res.status(404).json({ error: 'Gym owner not found' });
+    }
+    res.json(gymOwner);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.update('/account', async (req, res) => {
+  const gym_owner_id = req.user.id;
+  const { name, phone_number, gym_name } = req.body;
+
+  try {
+    const updatedGymOwner = await prisma.gym_owner.update({
+      where: { id: Number(gym_owner_id) },
+      data: { name, phone_number, gym_name },
+    });
+
+    res.json(updatedGymOwner);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.update('/change_password', async (req, res) => {
+  const gym_owner_id = req.user.id;
+  const { old_password, new_password } = req.body;
+
+  try {
+    const gymOwner = await prisma.gym_owner.findUnique({
+      where: { id: Number(gym_owner_id) },
+    });
+
+    if (!gymOwner || gymOwner.password !== old_password) {
+      return res.status(401).json({ error: 'Invalid old password' });
+    }
+
+    await prisma.gym_owner.update({
+      where: { id: Number(gym_owner_id) },
+      data: { password: new_password },
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
