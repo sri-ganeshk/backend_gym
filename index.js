@@ -403,5 +403,63 @@ app.put('/change_password', async (req, res) => {
 });
 
 
+app.get('/revenue', async (req, res) => {
+  const gym_owner_id = req.user.id;
+  const { gym_id } = req.query;
+
+  if (!gym_id) {
+    return res.status(400).json({ error: 'gym_id is required' });
+  }
+
+  try {
+    // Get start and end of the current month
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+
+    const endOfMonth = new Date(startOfMonth);
+    endOfMonth.setMonth(endOfMonth.getMonth() + 1, 0); // Last day of the month
+    endOfMonth.setHours(23, 59, 59, 999);
+
+    // Get revenue for the current month
+    const currentMonthRevenue = await prisma.membership.aggregate({
+      where: {
+        customer: {
+          gym_owner_id: Number(gym_owner_id),
+          gym_id: gym_id.toString(),
+        },
+        start_date: { gte: startOfMonth, lte: endOfMonth },
+      },
+      _sum: { amount: true },
+    });
+
+    res.json({
+      total_revenue: currentMonthRevenue._sum.amount || 0,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('total_active_count', async (req, res) => {
+  const gym_owner_id = req.user.id;
+
+
+  try {
+    const activeCount = await prisma.customer.count({
+      where: {
+        gym_owner_id: Number(gym_owner_id),
+        gym_id: gym_id.toString(),
+        status: true,
+      },
+    });
+
+    res.json({ total_active_count: activeCount });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
