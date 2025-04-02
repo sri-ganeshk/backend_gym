@@ -479,6 +479,70 @@ app.get('/expiring_memberships_count/', async (req, res) => {
 
 
 
+app.get('/revenue_details', async (req, res) => {
+  try {
+    // Retrieve all membership transactions from the database with customer relation
+    const transactions = await prisma.membership.findMany({
+      where: {
+        customer: {
+          gym_owner_id: Number(req.user.id),
+        },
+      },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            gym_id: true,
+            name: true,
+            phone_number: true
+          }
+        }
+      }
+    });
+
+    const revenueByMonth = {};
+
+    transactions.forEach((transaction) => {
+      const billDate = new Date(transaction.bill_date);
+      // Format month as full month name and extract year
+      const monthName = billDate.toLocaleString('default', { month: 'long' });
+      const year = billDate.getFullYear();
+      const key = `${monthName} ${year}`;
+
+      // Initialize group if it doesn't exist
+      if (!revenueByMonth[key]) {
+        revenueByMonth[key] = { transactions: [], revenue: 0 };
+      }
+      
+      // Create a new transaction object that includes customer's gym_id
+      const transactionWithGymId = {
+        ...transaction,
+        gym_id: transaction.customer.gym_id,
+        customer_name: transaction.customer.name,
+        customer_phone: transaction.customer.phone_number
+      };
+      
+      // Add transaction to the group and update the revenue sum
+      revenueByMonth[key].transactions.push(transactionWithGymId);
+      revenueByMonth[key].revenue += transaction.amount;
+    });
+
+    // Format the output as an array of month-wise revenue data
+    const result = Object.entries(revenueByMonth).map(([month, data]) => ({
+      month,
+      revenue: data.revenue,
+      transactions: data.transactions,
+    }));
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching revenue:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
