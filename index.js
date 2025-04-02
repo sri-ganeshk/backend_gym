@@ -1,12 +1,21 @@
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
+import rateLimit from 'express-rate-limit';
+import { body, validationResult } from 'express-validator';
+import { createClient } from 'redis';
+import cors from 'cors';
 import { initializeWhatsAppClient, getWhatsAppClient } from './whatsappClient.js';
-import cors from "cors"
+
 const app = express();
 const prisma = new PrismaClient();
-app.use(cors())
+
+// Middleware Setup
+app.use(cors());
 app.use(express.json());
+
+// Set trust proxy to 1 (assuming a single proxy/load balancer)
+app.set('trust proxy', 1);
 
 // Authentication middleware to verify JWT and attach gym_owner id to req.user
 function authenticateJWT(req, res, next) {
@@ -14,7 +23,6 @@ function authenticateJWT(req, res, next) {
   if (!authHeader) {
     return res.status(401).json({ error: 'Authorization header missing' });
   }
-
   // Expected format: "Bearer <token>"
   const token = authHeader.split(' ')[1];
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
@@ -55,13 +63,13 @@ app.post('/login', async (req, res) => {
   return res.json({ success: true, token });
 });
 
+// Apply JWT authentication middleware for all routes below
+app.use(authenticateJWT);
 
-app.use(authenticateJWT)
 /**
  * GET /get_profile
  * Request Query: gym_id
- * Response: { name, phone_number }
- * The gym_owner_id is obtained from the JWT token.
+ * Response: { name, phone_number, end_date }
  */
 app.get('/get_profile', async (req, res) => {
   const { gym_id } = req.query;
@@ -77,7 +85,7 @@ app.get('/get_profile', async (req, res) => {
         gym_id: gym_id.toString(),
         gym_owner_id: Number(gym_owner_id),
       },
-      select: { name: true, phone_number: true , end_date:true },
+      select: { name: true, phone_number: true, end_date: true },
     });
 
     if (!customer) {
@@ -91,12 +99,7 @@ app.get('/get_profile', async (req, res) => {
 
 /**
  * POST /membership
- * Request Body: {
- *   gym_id, phone_number, name, duration, start_date, payment_mode,
- *   amount, workout_type, personal_training
- * }
  * Creates a membership transaction and updates or creates a customer record.
- * The gym_owner_id is taken from the JWT token.
  */
 app.post('/membership', async (req, res) => {
   const {
@@ -179,7 +182,7 @@ app.post('/membership', async (req, res) => {
         start_date: newStartDate,
         bill_date: bill_date,
         payment_mode,
-        payment_details: payment_details || null, // Store payment details if provided
+        payment_details: payment_details || null,
         amount: parseFloat(amount),
         workout_type,
         personal_training,
@@ -199,7 +202,6 @@ app.post('/membership', async (req, res) => {
         ? phone_number
         : `91${phone_number}@s.whatsapp.net`;
 
-      // Update customer message to include payment details
       const customer_message = `${gymOwner.gym_name.toUpperCase()}
 
 DEAR : Madam / Sir
@@ -225,7 +227,6 @@ ${gymOwner.name}`;
       await waClient.sendMessage(waNumber, { text: customer_message });
       console.log(`Message sent to ${phone_number}`);
 
-      // Update owner message to include payment details
       const owner_message = `Hi ${gymOwner.name},
 A new membership has been created for ${customer.name} (${phone_number}).
 Membership Details:
@@ -253,9 +254,7 @@ ${payment_details ? `- Payment Details: ${payment_details}` : ''}
 
 /**
  * GET /profile
- * Request Query: gym_id
- * Response: { name, phone_number, status, end_date, membership_transactions }
- * The gym_owner_id is obtained from the JWT token.
+ * Response: Customer details with memberships.
  */
 app.get('/profile', async (req, res) => {
   const { gym_id } = req.query;
@@ -282,6 +281,7 @@ app.get('/profile', async (req, res) => {
       phone_number: customer.phone_number,
       status: customer.status,
       end_date: customer.end_date,
+      gym_id: customer.gym_id,
       membership_transactions: customer.memberships,
     });
   } catch (error) {
@@ -291,8 +291,7 @@ app.get('/profile', async (req, res) => {
 
 /**
  * GET /view_all
- * Response: List of customers with their status, end_date, and membership transactions.
- * The gym_owner_id is obtained from the JWT token.
+ * Response: List of all customers for the gym owner.
  */
 app.get('/view_all', async (req, res) => {
   const gym_owner_id = req.user.id;
@@ -313,9 +312,8 @@ app.get('/view_all', async (req, res) => {
 });
 
 /**
- * GET /expiring_memberships
- * Response: List of active customers with memberships expiring in the next 7 days.
- * The gym_owner_id is obtained from the JWT token.
+ * GET /expiring_memberships/:days
+ * Response: List of active customers with memberships expiring within the specified days.
  */
 app.get('/expiring_memberships/:days', async (req, res) => {
   const gym_owner_id = req.user.id;
@@ -332,7 +330,7 @@ app.get('/expiring_memberships/:days', async (req, res) => {
         status: true,
         end_date: { gte: now, lte: futureDate },
       },
-      select: { id: true, name: true, phone_number: true, end_date: true,gym_id: true },
+      select: { id: true, name: true, phone_number: true, end_date: true, gym_id: true },
     });
 
     res.json({
@@ -344,13 +342,17 @@ app.get('/expiring_memberships/:days', async (req, res) => {
   }
 });
 
+/**
+ * GET /account
+ * Response: Gym owner account details.
+ */
 app.get('/account', async (req, res) => {
   const gym_owner_id = req.user.id;
 
   try {
     const gymOwner = await prisma.gym_owner.findUnique({
       where: { id: Number(gym_owner_id) },
-      select: { name: true, phone_number: true, gym_name: true},
+      select: { name: true, phone_number: true, gym_name: true },
     });
 
     if (!gymOwner) {
@@ -362,22 +364,170 @@ app.get('/account', async (req, res) => {
   }
 });
 
-app.put('/account', async (req, res) => {
-  const gym_owner_id = req.user.id;
-  const { name, phone_number, gym_name } = req.body;
+// ----------------------
+// Redis & OTP Endpoints
+// ----------------------
 
-  try {
-    const updatedGymOwner = await prisma.gym_owner.update({
-      where: { id: Number(gym_owner_id) },
-      data: { name, phone_number, gym_name },
-    });
+// Initialize Redis client (ensure REDIS_URL is correct in your environment)
+const redisClient = createClient({ url: process.env.REDIS_URL });
+redisClient.on('error', (err) => console.error('Redis Client Error', err));
 
-    res.json(updatedGymOwner);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+// Rate limiter for OTP endpoints
+const otpLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes window
+  max: 5, // limit each IP to 5 OTP requests per windowMs
+  message: 'Too many OTP requests from this IP, please try again later'
 });
 
+// Middleware for input validation errors
+const validate = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+  next();
+};
+
+/**
+ * POST /request_phone_change
+ * Sends an OTP to the gym owner's current phone number when a phone change is requested.
+ */
+app.post(
+  '/request_phone_change',
+  otpLimiter,
+  body('new_phone_number').isMobilePhone('any').withMessage('Invalid phone number'),
+  validate,
+  async (req, res, next) => {
+    const gym_owner_id = req.user.id;
+    const { new_phone_number } = req.body;
+
+    try {
+      // Get current gym owner details
+      const gymOwner = await prisma.gym_owner.findUnique({
+        where: { id: Number(gym_owner_id) }
+      });
+      
+      if (!gymOwner) {
+        return res.status(404).json({ error: 'Gym owner not found' });
+      }
+      
+      // Check if new phone number already exists for another user
+      const existingUser = await prisma.gym_owner.findFirst({
+        where: { 
+          phone_number: new_phone_number,
+          id: { not: Number(gym_owner_id) }
+        }
+      });
+      
+      if (existingUser) {
+        return res.status(400).json({ error: 'Phone number already in use by another account' });
+      }
+  
+      // Generate 6 digit OTP
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const otpExpirySeconds = 10 * 60; // 10 minutes
+  
+      // Store OTP with gym owner ID and new phone number in Redis
+      const otpData = JSON.stringify({ otp, new_phone_number });
+      await redisClient.set(`otp:${gym_owner_id}`, otpData, { EX: otpExpirySeconds });
+      
+      // Send OTP via WhatsApp to the CURRENT phone number
+      const waClient = getWhatsAppClient();
+      const currentWaNumber = `91${gymOwner.phone_number}@s.whatsapp.net`;
+  
+      await waClient.sendMessage(currentWaNumber, { 
+        text: `Your OTP for phone number change is: ${otp}. Please use it to verify your new phone number: ${new_phone_number}` 
+      });
+  
+      res.json({ message: 'OTP sent to your current phone number for verification' });
+    } catch (error) {
+      console.error('Error requesting phone change', { error });
+      next(error);
+    }
+  }
+);
+
+/**
+ * PUT /update_phone_number
+ * Verifies the OTP and updates the phone number.
+ */
+app.put(
+  '/update_phone_number',
+  otpLimiter,
+  body('otp').isLength({ min: 6, max: 6 }).withMessage('OTP must be 6 digits'),
+  validate,
+  async (req, res, next) => {
+    const gym_owner_id = req.user.id;
+    const { otp } = req.body;
+  
+    try {
+      // Get stored OTP data from Redis
+      const otpDataRaw = await redisClient.get(`otp:${gym_owner_id}`);
+      if (!otpDataRaw) {
+        return res.status(400).json({ error: 'No pending phone number change request found or OTP expired' });
+      }
+  
+      const otpData = JSON.parse(otpDataRaw);
+      
+      // Verify OTP
+      if (otpData.otp !== otp) {
+        return res.status(400).json({ error: 'Invalid OTP' });
+      }
+      
+      // Update phone number
+      const updatedGymOwner = await prisma.gym_owner.update({
+        where: { id: Number(gym_owner_id) },
+        data: { phone_number: otpData.new_phone_number },
+      });
+      
+      // Clear OTP data from Redis
+      await redisClient.del(`otp:${gym_owner_id}`);
+      
+      // Send confirmation to new number via WhatsApp
+      const waClient = getWhatsAppClient();
+      const newWaNumber = `91${otpData.new_phone_number}@s.whatsapp.net`;
+      await waClient.sendMessage(newWaNumber, { 
+        text: `Your phone number has been successfully updated in your gym owner account.` 
+      });
+  
+      res.json(updatedGymOwner);
+    } catch (error) {
+      console.error('Error updating phone number', { error });
+      next(error);
+    }
+  }
+);
+
+/**
+ * PUT /account
+ * Updates basic account details (name, gym_name).
+ */
+app.put(
+  '/account',
+  body('name').optional().isString().trim().escape(),
+  body('gym_name').optional().isString().trim().escape(),
+  validate,
+  async (req, res, next) => {
+    const gym_owner_id = req.user.id;
+    const { name, gym_name } = req.body;
+  
+    try {
+      const updatedGymOwner = await prisma.gym_owner.update({
+        where: { id: Number(gym_owner_id) },
+        data: { name, gym_name },
+      });
+      res.json(updatedGymOwner);
+    } catch (error) {
+      console.error('Error updating account details', { error });
+      next(error);
+    }
+  }
+);
+
+/**
+ * PUT /change_password
+ * Changes the password for the gym owner.
+ */
 app.put('/change_password', async (req, res) => {
   const gym_owner_id = req.user.id;
   const { old_password, new_password } = req.body;
@@ -402,7 +552,10 @@ app.put('/change_password', async (req, res) => {
   }
 });
 
-
+/**
+ * GET /revenue
+ * Returns total revenue for the current month.
+ */
 app.get('/revenue', async (req, res) => {
   const gym_owner_id = req.user.id;
  
@@ -421,7 +574,6 @@ app.get('/revenue', async (req, res) => {
       where: {
         customer: {
           gym_owner_id: Number(gym_owner_id),
-          
         },
         start_date: { gte: startOfMonth, lte: endOfMonth },
       },
@@ -436,9 +588,12 @@ app.get('/revenue', async (req, res) => {
   }
 });
 
+/**
+ * GET /total_active_count
+ * Returns total active customer count.
+ */
 app.get('/total_active_count', async (req, res) => {
   const gym_owner_id = req.user.id;
-
 
   try {
     const activeCount = await prisma.customer.count({
@@ -454,9 +609,13 @@ app.get('/total_active_count', async (req, res) => {
   }
 });
 
+/**
+ * GET /expiring_memberships_count
+ * Returns the count of expiring memberships in the next 7 days.
+ */
 app.get('/expiring_memberships_count/', async (req, res) => {
   const gym_owner_id = req.user.id;
-  const days =  7;
+  const days = 7;
 
   try {
     const now = new Date();
@@ -477,11 +636,12 @@ app.get('/expiring_memberships_count/', async (req, res) => {
   }
 });
 
-
-
+/**
+ * GET /revenue_details
+ * Returns detailed revenue information grouped by month.
+ */
 app.get('/revenue_details', async (req, res) => {
   try {
-    // Retrieve all membership transactions from the database with customer relation
     const transactions = await prisma.membership.findMany({
       where: {
         customer: {
@@ -504,17 +664,14 @@ app.get('/revenue_details', async (req, res) => {
 
     transactions.forEach((transaction) => {
       const billDate = new Date(transaction.bill_date);
-      // Format month as full month name and extract year
       const monthName = billDate.toLocaleString('default', { month: 'long' });
       const year = billDate.getFullYear();
       const key = `${monthName} ${year}`;
 
-      // Initialize group if it doesn't exist
       if (!revenueByMonth[key]) {
         revenueByMonth[key] = { transactions: [], revenue: 0 };
       }
       
-      // Create a new transaction object that includes customer's gym_id
       const transactionWithGymId = {
         ...transaction,
         gym_id: transaction.customer.gym_id,
@@ -522,12 +679,10 @@ app.get('/revenue_details', async (req, res) => {
         customer_phone: transaction.customer.phone_number
       };
       
-      // Add transaction to the group and update the revenue sum
       revenueByMonth[key].transactions.push(transactionWithGymId);
       revenueByMonth[key].revenue += transaction.amount;
     });
 
-    // Format the output as an array of month-wise revenue data
     const result = Object.entries(revenueByMonth).map(([month, data]) => ({
       month,
       revenue: data.revenue,
@@ -541,8 +696,18 @@ app.get('/revenue_details', async (req, res) => {
   }
 });
 
+// ----------------------
+// Start the Server
+// ----------------------
+async function startServer() {
+  try {
+    // Connect to Redis
+    await redisClient.connect();
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+  } catch (err) {
+    console.error('Failed to start server', err);
+  }
+}
 
-
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+startServer();
