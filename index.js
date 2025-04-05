@@ -11,9 +11,16 @@ import dotenv from 'dotenv';
 dotenv.config();
 const app = express();
 const prisma = new PrismaClient();
+// Middleware to handle CORS
+const corsOptions = {
+  origin: true, // Allows all origins
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  maxAge: 86400
+};
 
-// Middleware Setup
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Set trust proxy to 1 (assuming a single proxy/load balancer)
@@ -877,10 +884,14 @@ app.get('/dashboard', async (req, res) => {
 // ----------------------
 async function startServer() {
   try {
-    // Connect to Redis
     await redisClient.connect();
+    
+    // Just use HTTP for your local server - ngrok will handle HTTPS
     const PORT = process.env.PORT || 3000;
-    app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on port ${PORT}`);
+      console.log(`Use ngrok to expose this port with HTTPS`);
+    });
   } catch (err) {
     console.error('Failed to start server', err);
   }
