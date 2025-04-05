@@ -696,6 +696,174 @@ app.get('/revenue_details', async (req, res) => {
   }
 });
 
+// profile edit of the customer
+app.put('/edit_profile', async (req, res) => {
+  const { gym_id, phone_number, name } = req.body;
+  const gym_owner_id = req.user.id;
+
+  if (!gym_id || !phone_number || !name) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  try {
+    const customer = await prisma.customer.update({
+      where: {
+        gym_owner_id: Number(gym_owner_id),
+        gym_id: gym_id.toString(),
+      },
+      data: {
+        name,
+        phone_number,
+      },
+    });
+
+    res.json({ success: true, customer });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// edit the transction of the customer
+app.put('/edit_transaction', async (req, res) => {
+  const { transaction_id, duration, start_date, payment_mode, amount, workout_type, personal_training } = req.body;
+  const gym_owner_id = req.user.id;
+
+  if (!transaction_id || !duration || !start_date || !payment_mode || !amount || !workout_type || personal_training === undefined) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  try {
+    const transaction = await prisma.membership.update({
+      where: { id: transaction_id },
+      data: {
+        duration,
+        start_date,
+        payment_mode,
+        amount,
+        workout_type,
+        personal_training,
+      },
+    });
+
+    res.json({ success: true, transaction });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /dashboard
+ * Response: Dashboard data with active/inactive counts, expiring memberships, today's transactions, and gym/owner information
+ */
+app.get('/dashboard', async (req, res) => {
+  const gym_owner_id = req.user.id;
+
+  try {
+    // First, get gym owner details to include name and gym name
+    const gymOwner = await prisma.gym_owner.findUnique({
+      where: { id: Number(gym_owner_id) },
+      select: { name: true, gym_name: true },
+    });
+
+    if (!gymOwner) {
+      return res.status(404).json({ error: 'Gym owner not found' });
+    }
+
+    // Get count of active members
+    const activeCount = await prisma.customer.count({
+      where: {
+        gym_owner_id: Number(gym_owner_id),
+        status: true,
+      },
+    });
+
+    // Get count of inactive members
+    const inactiveCount = await prisma.customer.count({
+      where: {
+        gym_owner_id: Number(gym_owner_id),
+        status: false,
+      },
+    });
+
+    // Get count of expiring memberships in the next 7 days
+    const now = new Date();
+    const futureDate = new Date();
+    futureDate.setDate(now.getDate() + 7);
+
+    const expiringCount = await prisma.customer.count({
+      where: {
+        gym_owner_id: Number(gym_owner_id),
+        status: true,
+        end_date: { gte: now, lte: futureDate },
+      },
+    });
+
+    // Get today's transactions based on Indian timezone
+    const indianTimeZone = 'Asia/Kolkata';
+    
+    // Calculate start and end of today in Indian timezone
+    const todayStart = new Date(new Date().toLocaleString("en-US", { timeZone: indianTimeZone }));
+    todayStart.setHours(0, 0, 0, 0);
+    
+    const todayEnd = new Date(new Date().toLocaleString("en-US", { timeZone: indianTimeZone }));
+    todayEnd.setHours(23, 59, 59, 999);
+
+    // Get transactions for today
+    const todayTransactions = await prisma.membership.findMany({
+      where: {
+        customer: {
+          gym_owner_id: Number(gym_owner_id),
+        },
+        bill_date: {
+          gte: todayStart,
+          lte: todayEnd,
+        },
+      },
+      include: {
+        customer: {
+          select: {
+            name: true,
+            phone_number: true,
+            gym_id: true,
+          },
+        },
+      },
+    });
+
+    // Calculate total revenue from today's transactions
+    const todayRevenue = todayTransactions.reduce((sum, transaction) => sum + transaction.amount, 0);
+
+    // Return all dashboard data in one response, including gym name and owner name
+    res.json({
+      gym_owner: {
+        name: gymOwner.name,
+        gym_name: gymOwner.gym_name
+      },
+      active_members: activeCount,
+      inactive_members: inactiveCount,
+      expiring_memberships: expiringCount,
+      today_transactions: {
+        count: todayTransactions.length,
+        revenue: todayRevenue,
+        transactions: todayTransactions.map(tx => ({
+          id: tx.id,
+          amount: tx.amount,
+          payment_mode: tx.payment_mode,
+          customer_name: tx.customer.name,
+          customer_phone: tx.customer.phone_number,
+          customer_gym_id: tx.customer.gym_id,
+          bill_date: tx.bill_date,
+          payment_details: tx.payment_details || null,
+          workout_type: tx.workout_type,
+          personal_training: tx.personal_training,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching dashboard data:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 // ----------------------
 // Start the Server
 // ----------------------
