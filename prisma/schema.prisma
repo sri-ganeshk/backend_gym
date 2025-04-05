@@ -15,7 +15,6 @@ model gym_owner {
   password     String
   gym_name     String
   customers    customer[]
-  gym_plans   gym_plans[]
 }
 
 model customer {
@@ -27,6 +26,7 @@ model customer {
   phone_number  String
   status        Boolean      @default(false)
   end_date      DateTime?
+  id_card_number String?     // Optional ID card number
   memberships   membership[]
 
   @@unique([gym_id, gym_owner_id])
@@ -47,12 +47,3 @@ model membership {
   personal_training Boolean   // true if personal training is included
 }
 
-model gym_plans {
-  id                Int       @id @default(autoincrement())
-  gym_owner_id      Int
-  gym_owner         gym_owner @relation(fields: [gym_owner_id], references: [id])
-  plan_name         String
-  duration          Int       // e.g., number of months
-  amount            Float
-  workout_type      String    // "cardio", "strength", or "both"
-  }

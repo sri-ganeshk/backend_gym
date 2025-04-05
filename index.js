@@ -6,7 +6,9 @@ import { body, validationResult } from 'express-validator';
 import { createClient } from 'redis';
 import cors from 'cors';
 import { initializeWhatsAppClient, getWhatsAppClient } from './whatsappClient.js';
-
+// At the top of your entry file (index.js)
+import dotenv from 'dotenv';
+dotenv.config();
 const app = express();
 const prisma = new PrismaClient();
 
@@ -48,7 +50,7 @@ app.post('/login', async (req, res) => {
   if (!phone_number || !password) {
     return res.status(400).json({ error: 'Phone number and password are required' });
   }
-
+  console.log('Login attempt with phone number:', phone_number);
   // Find gym owner by phone number
   const gymOwner = await prisma.gym_owner.findUnique({
     where: { phone_number },
@@ -67,33 +69,43 @@ app.post('/login', async (req, res) => {
 app.use(authenticateJWT);
 
 /**
- * GET /get_profile
- * Request Query: gym_id
- * Response: { name, phone_number, end_date }
+ * Check if a gym ID already exists
+ * @route GET /check_gym_id
+ * @param {string} gym_id - The gym ID to check
+ * @returns {object} Object with exists field indicating if ID exists
  */
-app.get('/get_profile', async (req, res) => {
-  const { gym_id } = req.query;
-  const gym_owner_id = req.user.id;
-
-  if (!gym_id) {
-    return res.status(400).json({ error: 'Missing gym_id' });
-  }
-
+app.get('/check_gym_id', async (req, res) => {
   try {
-    const customer = await prisma.customer.findFirst({
-      where: {
-        gym_id: gym_id.toString(),
-        gym_owner_id: Number(gym_owner_id),
-      },
-      select: { name: true, phone_number: true, end_date: true },
-    });
-
-    if (!customer) {
-      return res.status(404).json({ error: 'Customer not found' });
+    const { gym_id } = req.query;
+    const gym_owner_id = req.user.id;
+    
+    if (!gym_id) {
+      return res.status(400).json({ error: 'Gym ID is required' });
     }
-    res.json(customer);
+    
+    // Only check if the ID exists, don't fetch the entire profile
+    const customerExists = await prisma.customer.findFirst({
+      where: {
+        gym_owner_id: Number(gym_owner_id),
+        gym_id: gym_id.toString(),
+      },
+      select: {
+        id: true, // Only select the ID field to minimize data transfer
+      },
+    });
+    
+    return res.status(200).json({ 
+      exists: !!customerExists,
+      message: customerExists 
+        ? 'This Gym ID already exists' 
+        : 'Gym ID is available'
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Error checking gym ID:', error);
+    return res.status(500).json({ 
+      error: 'Failed to check gym ID',
+      details: error.message 
+    });
   }
 });
 
@@ -112,7 +124,8 @@ app.post('/membership', async (req, res) => {
     amount,
     workout_type,
     personal_training,
-    payment_details, // New field for UPI/Card details
+    payment_details, // UPI/Card details
+    id_card_number, // Optional ID card number
   } = req.body;
   const gym_owner_id = req.user.id;
 
@@ -144,6 +157,11 @@ app.post('/membership', async (req, res) => {
       },
     });
 
+    if (customer) {
+      // If customer exists, we don't allow adding a new one with this gym_id
+      return res.status(400).json({ error: 'A customer with this Gym ID already exists' });
+    }
+
     // Calculate new end_date based on start_date and duration (in months)
     const newStartDate = new Date(start_date);
     const newEndDate = new Date(new Date(start_date).setMonth(new Date(start_date).getMonth() + Number(duration)));
@@ -151,28 +169,18 @@ app.post('/membership', async (req, res) => {
     // Get bill_date in Asia/Kolkata timezone
     const bill_date = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
 
-    if (!customer) {
-      // Create new customer with active membership status
-      customer = await prisma.customer.create({
-        data: {
-          gym_owner_id: Number(gym_owner_id),
-          name,
-          phone_number,
-          status: true,
-          gym_id: gym_id.toString(),
-          end_date: newEndDate,
-        },
-      });
-    } else {
-      // Update existing customer's membership details
-      customer = await prisma.customer.update({
-        where: { id: customer.id },
-        data: {
-          status: true,
-          end_date: newEndDate,
-        },
-      });
-    }
+    // Create new customer with active membership status
+    customer = await prisma.customer.create({
+      data: {
+        gym_owner_id: Number(gym_owner_id),
+        name,
+        phone_number,
+        status: true,
+        gym_id: gym_id.toString(),
+        end_date: newEndDate,
+        id_card_number: id_card_number || null, // Store ID card number if provided
+      },
+    });
 
     // Create membership transaction record with payment details
     const membership = await prisma.membership.create({
