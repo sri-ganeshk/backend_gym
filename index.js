@@ -738,6 +738,24 @@ app.put('/edit_profile', async (req, res) => {
   }
 });
 
+app.get("/search/:id", async (req, res) => {
+    const gym_owner_id = req.user.id;
+    const id = req.params.id;
+    
+    const customer = await prisma.customer.findFirst({
+        where: {
+            gym_owner_id: Number(gym_owner_id),
+            gym_id: id.toString()
+        }
+    });
+    
+    if (!customer) {
+        return res.status(404).json({ error: "Customer not found" });
+    }
+    
+    res.json(customer);
+});
+
 // edit the transction of the customer
 app.put('/edit_transaction', async (req, res) => {
   const { transaction_id, duration, start_date, payment_mode, amount, workout_type, personal_training } = req.body;
