@@ -342,7 +342,6 @@ app.get('/expiring_memberships/:days', async (req, res) => {
     const expiringCustomers = await prisma.customer.findMany({
       where: {
         gym_owner_id: Number(gym_owner_id),
-        status: true,
         end_date: { gte: now, lte: futureDate },
       },
       select: { id: true, name: true, phone_number: true, end_date: true, gym_id: true },
